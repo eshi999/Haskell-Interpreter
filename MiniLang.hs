@@ -1,4 +1,4 @@
-module MiniLangBasic where
+module MiniLang where
 import Data.Char (isDigit, isAlpha, isAlphaNum, isSpace)
 import Control.Monad.Identity (Identity)
 import Data.Time.Format.ISO8601 (yearFormat)
@@ -27,7 +27,7 @@ data Token
 lexTokens :: String -> [Token]
 lexTokens [] = []
 lexTokens (c:cs)
-    | isSpace c = lexTokens cs -- (h:t)
+    | isSpace c = lexTokens cs -- (h:t) if c is a space SKIP it
     | isDigit c =
         let (digits, rest) = span isDigit (c:cs)
         in TInt (read digits) : lexTokens rest
@@ -72,7 +72,7 @@ parse [TIf, cond, thenE, elseE] =         --using literal list pattern
 
 -- plus
 parse [tok1, TPlus, tok2] =
-        EMinus (parse [tok1]) (parse [tok2])
+    EPlus (parse [tok1]) (parse [tok2])
 
 -- minus
 parse [tok1, TMinus, tok2]=
@@ -114,7 +114,7 @@ eval (EPlus e1 e2) =
 
 eval (EMinus e1 e2) =
     case (eval e1, eval e2) of
-        (VInt n1, VInt n2)     -> VInt (mySub n1 n2)
+        (VInt n1, VInt n2)    -> VInt (mySub n1 n2)
         _                     -> error "Type error in subtraction"
 
 ---------------------------------------------------------------
