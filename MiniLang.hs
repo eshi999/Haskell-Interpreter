@@ -1,6 +1,7 @@
 module MiniLangBasic where
 import Data.Char (isDigit, isAlpha, isAlphaNum, isSpace)
 import Control.Monad.Identity (Identity)
+import Data.Time.Format.ISO8601 (yearFormat)
 
 ---------------------------------------------------------------
 -- 1. Creating tokens
@@ -66,34 +67,75 @@ parse [TBool b]     = EBool b
 parse [TVar x]     = EVar x
 
 -- if expressions -> if then else
-parse (TIf : cond : thenE : elseE : []) =
+parse [TIf, cond, thenE, elseE] =         --using literal list pattern
     EIf (parse [cond]) (parse [thenE]) (parse [elseE])
 
 -- plus
-parse (tok1 : TPlus : tok2 : []) =
+parse [tok1, TPlus, tok2] =
         EMinus (parse [tok1]) (parse [tok2])
 
 -- minus
-parse [t
-ok1, TMinus, tok2]=
+parse [tok1, TMinus, tok2]=
     EMinus (parse [tok1]) (parse [tok2])
 
 parse toks = error ("Cannot parse:" ++ show toks)     -- show tokens
 
 
 ---------------------------------------------------------------
--- 5. Values
+-- 5. Values defined for int ans bool
 ---------------------------------------------------------------
 
 data Value
     = VInt Int
     | VBool Bool
-    deriving (show,Eq)
+    deriving (Show,Eq)
 
 
 ---------------------------------------------------------------
--- actual EVALUATIR FINALLY!!!
+-- EVALUATIR
 ---------------------------------------------------------------
-
+--Bool
 eval :: Expr -> Value
 eval (EInt n)       = VInt n
+eval (EBool b)      = VBool b
+eval (EVar x)       = error ("Unbound variable: " ++ x)
+eval (EIf cond t e) = 
+    case eval cond of                              -- Covered in class today also read slides completely
+
+        VBool True   -> eval t
+        VBool False  -> eval e
+        _            -> error "Condition must be a Boolean Value"
+
+--Arithmetic
+eval (EPlus e1 e2) =
+    case (eval e1, eval e2) of
+        (VInt n1, VInt n2) -> VInt (myAdd n1 n2)
+        _                  -> error "Type error in addition"
+
+eval (EMinus e1 e2) =
+    case (eval e1, eval e2) of
+        (VInt n1, VInt n2)     -> VInt (mySub n1 n2)
+        _                     -> error "Type error in subtraction"
+
+---------------------------------------------------------------
+-- Arithmetic function definitions
+---------------------------------------------------------------
+
+myAdd :: Int -> Int -> Int
+myAdd x y = x + y
+
+mySub :: Int -> Int -> Int
+mySub x y = x - y
+
+---------------------------------------------------------------
+-- Helper functions defined
+---------------------------------------------------------------
+
+-- run function for parsing and building AST:
+run :: String -> Expr
+run = parse . lexTokens
+
+-- parse + eval function:
+runEval :: String -> Value
+runEval = eval . run
+
