@@ -2,6 +2,7 @@ module MiniLang where
 import Data.Char (isDigit, isAlpha, isAlphaNum, isSpace)
 import Control.Monad.Identity (Identity)
 import Data.Time.Format.ISO8601 (yearFormat)
+import System.Console.Terminfo (restoreDefaultColors)
 
 ---------------------------------------------------------------
 -- 1. Creating tokens
@@ -24,6 +25,9 @@ data Token
     | TGreater
     | TLet
     | TAssign
+    | TLeftP
+    | TRightP
+    | TSemicolon
 
     deriving (Show,Eq)
 
@@ -60,16 +64,19 @@ lexTokens (c:cs)
     | c == '=' = TAssign : lexTokens cs
     | c == '<' = TLess : lexTokens cs
     | c == '>' = TGreater : lexTokens cs
+    | c == '(' = TLeftP : lexTokens cs
+    | c == ')' = TRightP : lexTokens cs
+    | c == ';' = TSemicolon : lexTokens cs
 
     | otherwise = error ("Unexpected char:" ++ [c])
 
 ---------------------------------------------------------------
 -- 3. Creating our own Ast tree
 ---------------------------------------------------------------
-data Expr
-    = EInt Int
+data Expr = EInt Int
     | EBool Bool
     | EVar String
+    -- left and right p??
     | EIf Expr Expr Expr
     | EPlus Expr Expr
     | EMinus Expr Expr
@@ -79,10 +86,10 @@ data Expr
     | ENeq Expr Expr
     | ELt Expr Expr
     | EGt Expr Expr
-    | ELet String Expr Expr
+    | ELet Expr Expr
+    | ESemicolonSequence Expr Expr
 
   deriving (Show, Eq)
-
 -- all these give bool ans
 -- like Equal? True, or NotEqual? False
 ---------------------------------------------------------------
@@ -96,22 +103,6 @@ parse [TVar x]     = EVar x
 -- if expressions -> if then else
 parse [TIf, cond, thenE, elseE] =         --using literal list pattern
     EIf (parse [cond]) (parse [thenE]) (parse [elseE])
-
--- plus
-parse [tok1, TPlus, tok2] =
-    EPlus (parse [tok1]) (parse [tok2])
-
--- minus
-parse [tok1, TMinus, tok2]=
-    EMinus (parse [tok1]) (parse [tok2])
-
--- multiply
-parse [tok1, TTimes, tok2] =
-    ETimes (parse [tok1]) (parse [tok2])
-
--- divide
-parse [tok1, TDiv, tok2] =
-    EDiv (parse [tok1]) (parse [tok2])
 
 -- equal to
 parse [tok1, TEq, tok2] = 
@@ -129,17 +120,92 @@ parse [tok1, TLess, tok2] =
 parse [tok1, TGreater, tok2] = 
     EGt  (parse [tok1]) (parse [tok2])
 
--- pattern match on [TLet, TVar x, TAssign, expr1, expr2]
-parse [TLet, TVar x, TAssign, val, body] =
-    ELet x (parse [val]) (parse [body])
+-- pattern match on [TLet, TVar x, TAssign, expr1]
+parse [TLet, TVar x, TAssign, val ] =
+    ELet (parse [TVar x]) (parse [val])
+parse toks =
+  case splitOnSemicolon toks of
+    [stmt] -> fst (parseExpr 0 stmt)
+    (stmt:rest) -> ESemicolonSequence (fst (parseExpr 0 stmt)) (parse (concat rest))
+    [] -> error "Empty input"
+
+-- Split a list of tokens into sublists, divided by semicolons
+splitOnSemicolon :: [Token] -> [[Token]]
+splitOnSemicolon [] = []
+splitOnSemicolon toks =
+  let (stmt, rest) = break (== TSemicolon) toks
+  in case rest of
+       [] -> [stmt]
+       (_ : rest') -> stmt : splitOnSemicolon rest'
 
 
 
-parse toks = error ("Cannot parse:" ++ show toks)     -- show tokens
+parse toks = error ("Cannot parse:" ++ show toks)     -- shows tokens
+
+-- these were fixed length parses
+-- now for any length token list:
+parseExprVar :: [Token] -> Expr
+parseExprVar [] = error "cant have an empty input"
+parseExprVar [TInt n] = EInt n
+parseExprVar (TInt n : TPlus : rest)= -- TPLUS
+    EPlus (EInt n) (parseExprVar rest)
+parseExprVar (TInt n : TMinus : rest)= -- TMinus
+    EPlus (EInt n) (parseExprVar rest)
+parseExprVar (TInt n : TTimes : rest)= -- TTimes
+    EPlus (EInt n) (parseExprVar rest)
+parseExprVar (TInt n : TDiv : rest)= -- TDiv
+    EPlus (EInt n) (parseExprVar rest)
 
 -- how can we pattern match more generally??
 -- what if you have longer than 2 or 3 lists
     -- cases make sense to implement 
+
+-- now defining the PRATT PARSER OPERATOR TABLE THINGY
+parseExpr :: Int -> [Token] -> (Expr, [Token])
+parseExpr minBP tokens =
+    let (lhs,rest) = parseAtom tokens
+    in loop lhs rest
+    where
+        loop lhs toks =
+            case toks of 
+                (op : toks')
+                    | lbp op >= minBP -> 
+                        let (rhs, toks'') = parseExpr (rbp op) toks' 
+                        in loop (makeExpr op lhs rhs) toks'' 
+                _ -> (lhs, toks)
+
+makeExpr :: Token -> Expr -> Expr -> Expr
+makeExpr TPlus   = EPlus
+makeExpr TMinus  = EMinus
+makeExpr TTimes  = ETimes
+makeExpr TDiv    = EDiv
+makeExpr TEq     = EEq
+makeExpr TNotEq  = ENeq
+makeExpr TLess   = ELt
+makeExpr TGreater= EGt
+makeExpr _       = \_ _ -> error "unknown operator in makeExpr"
+
+lbp TPlus = 10
+lbp TMinus = 10
+lbp TTimes = 20
+lbp TDiv = 20
+-- lbp TLeftP = 30
+-- lbp TRightP = 30
+lbp _ = 0
+
+rbp = lbp
+
+parseAtom (TInt n : rest) = (EInt n, rest)
+parseAtom (TBool b : rest) = (EBool b, rest)
+parseAtom (TVar x : rest) = (EVar x, rest)
+parseAtom (TLeftP : rest)=
+    let (expr, rest') = parseExpr 0 rest
+    in case rest' of
+         (TRightP : rest'') -> (expr, rest'')
+         _ -> error "missing closing parenthesis"
+parseAtom [] = error "unexpected end of input"
+parseAtom _  = error "invalid atom"
+
 ---------------------------------------------------------------
 -- 5. Values defined for int and bool
 ---------------------------------------------------------------
@@ -210,11 +276,13 @@ eval (EGt e1 e2) =
         _                     -> error "Type error in >"
 
 
-eval (ELet name valExpr body) =
+eval (ELet name valExpr) =
     let val = eval valExpr
         env = [(name, val)]
-    in evalWithEnv body env
+    in evalWithEnv env
 
+
+-- factor to also have an env
 ---------------------------------------------------------------
 -- Arithmetic function definitions
 ---------------------------------------------------------------
@@ -287,25 +355,25 @@ evalWithEnv (ENeq e1 e2) env =
         (VBool b1, VBool b2) -> VBool (b1 /= b2)
         _ -> error "Type error in !="
 
-evalWithEnv (ELt e1 e2) env =
-    case (evalWithEnv e1 env, evalWithEnv e2 env) of
-        (VInt n1, VInt n2) -> VBool (n1 < n2)
-        _ -> error "Type error in <"
+--evalWithEnv (ELt e1 e2) env =
+    --case (evalWithEnv e1 env, evalWithEnv e2 env) of
+      --  (VInt n1, VInt n2) -> VBool (n1 < n2)
+        --_ -> error "Type error in <"
 
-evalWithEnv (EGt e1 e2) env =
-    case (evalWithEnv e1 env, evalWithEnv e2 env) of
-        (VInt n1, VInt n2) -> VBool (n1 > n2)
-        _ -> error "Type error in >"
+--evalWithEnv (EGt e1 e2) env =
+    --case (evalWithEnv e1 env, evalWithEnv e2 env) of
+        --(VInt n1, VInt n2) -> VBool (n1 > n2)
+        --_ -> error "Type error in >"
 
 -- Let binding
-evalWithEnv (ELet name valExpr body) env =
-    let val = evalWithEnv valExpr env
-        newEnv = (name, val) : env
-    in evalWithEnv body newEnv
+--evalWithEnv (ELet name valExpr body) env =
+    --let val = evalWithEnv valExpr env
+        --newEnv = (name, val) : env
+    --in evalWithEnv body newEnv
 
 
 ---------------------------------------------------------------
--- Helper functions defined
+-- Helper functions
 ---------------------------------------------------------------
 
 -- run function for parsing and building AST:
@@ -314,7 +382,7 @@ run = parse . lexTokens -- so it js shows u the tokens it created
 
 -- parse + eval function:
 runEval :: String -> Value
-runEval = eval . run   -- 
+runEval = eval . run   -- you evaluate the tokens u parsed thru
 
 
 
@@ -347,8 +415,7 @@ runEval = eval . run   --
 -- to do by next deadline
 
 --------------------------------------------------
--- later:
--- functions. how does someone define a function
+
 -- lists and tuples
 
 
@@ -358,7 +425,12 @@ runEval = eval . run   --
 -- so when a token comes accross it it just sees a ; token and parses accrows it in one line
 
 
+-- kinda like a calculator with memory--  rebind names??
+-- refactor passes
 
+
+-- recursive descent is the easier parser technique
+-- helper functions for parsing the hwole list of tokens
 
 
 -- pratt parsers are a cnice way to coe up with a solution for this IN ONE LINEAR PASS
@@ -369,3 +441,7 @@ runEval = eval . run   --
 
 
 --basically a lookup table for operator precedence, like rank all o fhem
+
+
+-- later:
+-- functions. how does someone define a function
