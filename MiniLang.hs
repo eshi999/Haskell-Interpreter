@@ -140,8 +140,6 @@ splitOnSemicolon toks =
 
 
 
-parse toks = error ("Cannot parse:" ++ show toks)     -- shows tokens
-
 -- these were fixed length parses
 -- now for any length token list:
 parseExprVar :: [Token] -> Expr
@@ -305,13 +303,18 @@ type Env =[(String, Value)]
 
 -- Evaluate an expression with a given environment (used for let bindings)
 evalWithEnv :: Expr -> Env -> Value
-evalWithEnv (EVar x) env =
-    case lookup x env of
-        Just v  -> v
-        Nothing -> error ("Unbound variable: " ++ x)
-
 evalWithEnv (EInt n) _ = VInt n
 evalWithEnv (EBool b) _ = VBool b
+-- ************ figure this out
+evalWithEnv (EVar x) env =
+    case lookup x env of
+        Just v  -> v -- uses stored value of variable
+        Nothing -> error ("Unbound variable: " ++ x)
+
+evalWithEnv (ESemicolonSequence e1 e2) env =
+    let _ = evalWithEnv e1 env
+        val = evalWithEnv e2 env
+    in val
 
 -- Arithmetic
 evalWithEnv (EPlus e1 e2) env =
@@ -324,7 +327,6 @@ evalWithEnv (EMinus e1 e2) env =
         (VInt n1, VInt n2) -> VInt (n1 - n2)
         _ -> error "Type error in -"
 
--- Multiplication / division
 evalWithEnv (ETimes e1 e2) env =
     case (evalWithEnv e1 env, evalWithEnv e2 env) of
         (VInt n1, VInt n2) -> VInt (n1 * n2)
@@ -335,42 +337,21 @@ evalWithEnv (EDiv e1 e2) env =
         (VInt n1, VInt n2) -> VInt (n1 `div` n2)
         _ -> error "Type error in /"
 
--- Conditionals
-evalWithEnv (EIf cond t e) env =
-    case evalWithEnv cond env of
-        VBool True  -> evalWithEnv t env
-        VBool False -> evalWithEnv e env
-        _ -> error "Condition must be a boolean"
 
--- Comparisons
-evalWithEnv (EEq e1 e2) env =
-    case (evalWithEnv e1 env, evalWithEnv e2 env) of
-        (VInt n1, VInt n2)   -> VBool (n1 == n2)
-        (VBool b1, VBool b2) -> VBool (b1 == b2)
-        _ -> error "Type error in =="
+evalWithEnv (ELet (EVar name) valExpr) env =
+    let val = evalWithEnv valExpr env
+        newEnv = (name, val) : env
+    in evalWithEnv body newEnv
 
-evalWithEnv (ENeq e1 e2) env =
-    case (evalWithEnv e1 env, evalWithEnv e2 env) of
-        (VInt n1, VInt n2)   -> VBool (n1 /= n2)
-        (VBool b1, VBool b2) -> VBool (b1 /= b2)
-        _ -> error "Type error in !="
+evalWithEnv (ESemicolonSequence e1 e2) env =
+    let newEnv = updateEnv e1 env
+    in evalWithEnv e2 newEnv -- recursively call
 
---evalWithEnv (ELt e1 e2) env =
-    --case (evalWithEnv e1 env, evalWithEnv e2 env) of
-      --  (VInt n1, VInt n2) -> VBool (n1 < n2)
-        --_ -> error "Type error in <"
-
---evalWithEnv (EGt e1 e2) env =
-    --case (evalWithEnv e1 env, evalWithEnv e2 env) of
-        --(VInt n1, VInt n2) -> VBool (n1 > n2)
-        --_ -> error "Type error in >"
-
--- Let binding
---evalWithEnv (ELet name valExpr body) env =
-    --let val = evalWithEnv valExpr env
-        --newEnv = (name, val) : env
-    --in evalWithEnv body newEnv
-
+updateEnv :: Expr -> Env -> Env
+updateEnv (ELet (EVar name) valExpr) env =
+    let val = evalWithEnv valExpr env
+    in (name, val) : env
+updateEnv _ env = env
 
 ---------------------------------------------------------------
 -- Helper functions
